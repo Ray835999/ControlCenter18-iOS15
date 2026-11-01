@@ -120,6 +120,12 @@ void MSHookMessageEx(Class cls, SEL sel, IMP imp, IMP *result)
         return;
     }
 
+    if (!cls || !sel) {
+        if (result)
+            *result = 0;
+        return;
+    }
+
     /* Conservative fallback.  It handles the normal "hook an existing
      * method" case, which is what ControlCenter18 uses on SpringBoard. */
     Method method = class_getInstanceMethod(cls, sel);

@@ -11,7 +11,7 @@ permissions:
 env:
   BASE_DEB_URL: https://github.com/Ray835999/ControlCenter18-iOS15/releases/download/v3.0-beta-ios15.15/ControlCenter18_3.0-beta-ios15.15_arm64.deb
   BASE_DEB_SHA256: 9403952c45d1c86d6e80b93baf0a806ad3a273393bc99303802ca41e8daffcd7
-  VERSION: 3.0-beta-ios15.16
+  VERSION: 3.0-beta-ios15.17
 
 jobs:
   build:
@@ -51,6 +51,8 @@ jobs:
             shim/CC18Compat.c shim/CC18Compat.S -o build/CC18Compat_arm64.dylib
           clang -target arm64e-apple-ios15.0 $COMMON \
             shim/CC18Compat.c shim/CC18Compat.S -o build/CC18Compat_arm64e.dylib
+          /tmp/ldid -S build/CC18Compat_arm64.dylib
+          /tmp/ldid -S build/CC18Compat_arm64e.dylib
           python3 tools/make_fat.py build/CC18Compat.dylib \
             build/CC18Compat_arm64.dylib build/CC18Compat_arm64e.dylib
           cp build/CC18Compat.dylib \
@@ -74,7 +76,6 @@ jobs:
       - name: Sign patched images
         run: |
           /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18.dylib
-          /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib
           /tmp/ldid -S work/data/var/jb/Library/PreferenceBundles/ControlCenter18Prefs.bundle/ControlCenter18Prefs
           /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18Settings.dylib
           /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18Modules.dylib
