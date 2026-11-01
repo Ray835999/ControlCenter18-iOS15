@@ -44,9 +44,18 @@ def check_imports(path):
         p = base + 32
         found = {}
         minos = None
+        shim_ordinal = None
+        load_ordinal = 0
         for _ in range(ncmds):
             cmd, cmdsize = struct.unpack_from("<II", data, p)
-            if cmd == LC_DYLD_CHAINED_FIXUPS:
+            if cmd in (0xC, 0x80000018, 0x8000001F, 0x80000023):
+                # LOAD_DYLIB / LOAD_WEAK_DYLIB / REEXPORT_DYLIB /
+                # LOAD_UPWARD_DYLIB all receive a dyld ordinal.
+                load_ordinal += 1
+                name_off = struct.unpack_from("<I", data, p + 8)[0]
+                if b"CC18ObjCLegacy" in data[p + name_off:p + cmdsize]:
+                    shim_ordinal = load_ordinal
+            elif cmd == LC_DYLD_CHAINED_FIXUPS:
                 dataoff, datasize = struct.unpack_from("<II", data, p + 8)
                 off = base + dataoff
                 hdr = struct.unpack_from("<7I", data, off)
@@ -63,14 +72,15 @@ def check_imports(path):
             elif cmd == LC_BUILD_VERSION:
                 minos = struct.unpack_from("<I", data, p + 12)[0]
             p += cmdsize
-        print("slice cpusubtype=%#x minos=%s imports=%s" % (cpusubtype, minos, found))
+        print("slice cpusubtype=%#x minos=%s imports=%s shim_ordinal=%s" %
+              (cpusubtype, minos, found, shim_ordinal))
         for name in WANTED:
-            if found.get(name) != 0xFE:
-                print("  BAD", name, found.get(name))
+            if found.get(name) != shim_ordinal:
+                print("  BAD", name, found.get(name), "expected", shim_ordinal)
                 ok = False
     if not ok:
-        raise SystemExit("flat import check failed")
-    print("flat substrate imports OK:", path)
+        raise SystemExit("substrate import binding check failed")
+    print("substrate imports bound to shim:", path)
 
 
 if __name__ == "__main__":

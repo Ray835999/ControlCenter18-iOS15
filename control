@@ -1,6 +1,6 @@
 Package: com.evgeniy558.controlcenter18
 Name: ControlCenter18 (iOS 15)
-Version: 3.0-beta-ios15.19
+Version: 3.0-beta-ios15.20
 Architecture: iphoneos-arm64
 Description: ControlCenter18 3.0-beta ported to iOS 15.8.8 (arm64, rootless).
  The original tweak is built for iOS 16/17 and links the iOS 16 Objective-C ABI.

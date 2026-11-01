@@ -11,7 +11,7 @@ permissions:
 env:
   BASE_DEB_URL: https://github.com/Ray835999/ControlCenter18-iOS15/releases/download/v3.0-beta-ios15.15/ControlCenter18_3.0-beta-ios15.15_arm64.deb
   BASE_DEB_SHA256: 9403952c45d1c86d6e80b93baf0a806ad3a273393bc99303802ca41e8daffcd7
-  VERSION: 3.0-beta-ios15.19
+  VERSION: 3.0-beta-ios15.20
 
 jobs:
   build:

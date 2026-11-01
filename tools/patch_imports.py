@@ -31,6 +31,13 @@ def read_cstr(buf, off):
 
 
 def patch_slice(path, fat, binary, wanted):
+    shim_ordinal = None
+    for idx, lib in enumerate(binary.libraries):
+        if "CC18ObjCLegacy" in lib.name:
+            # LIEF includes LC_ID_DYLIB at index 0; dyld ordinals are the
+            # 1-based index of each LC_LOAD_DYLIB, which matches this index.
+            shim_ordinal = idx
+            break
     for cmd in binary.commands:
         if cmd.command.name != CHAINED_FIXUPS:
             continue
@@ -50,11 +57,21 @@ def patch_slice(path, fat, binary, wanted):
             ordinal = value & 0xFF
             name_off = value >> 9
             name = read_cstr(raw, symbols + name_off)
-            if name in wanted and ordinal != FLAT_LOOKUP:
-                value = (value & ~0xFF) | FLAT_LOOKUP
+            if name not in wanted:
+                continue
+            # Substrate imports are bound directly to the bundled shim, not
+            # via flat lookup: Dopamine ships a CydiaSubstrate compatibility
+            # module whose MSHookMessageEx can shadow ours and do nothing.
+            # The Objective-C ABI imports still use flat lookup.
+            if name.startswith("_MSHook") and shim_ordinal is not None:
+                target = shim_ordinal
+            else:
+                target = FLAT_LOOKUP
+            if ordinal != target:
+                value = (value & ~0xFF) | target
                 struct.pack_into("<I", patch, field_off, value)
                 changed += 1
-                print("  flat %-40s was ordinal %d" % (name, ordinal))
+                print("  bind %-40s ordinal %d -> %d" % (name, ordinal, target))
         if changed:
             with open(path, "wb") as f:
                 f.write(patch)
