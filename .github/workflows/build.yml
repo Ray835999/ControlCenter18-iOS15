@@ -92,7 +92,8 @@ jobs:
       - name: Pack rootless deb
         run: |
           mkdir -p dist
-          python3 tools/pack_deb.py work/data control \
+          cp control work/ctrl/control
+          python3 tools/pack_deb.py work/data work/ctrl/control \
             "dist/ControlCenter18_${VERSION}_arm64.deb" "$VERSION"
           dpkg-deb -I "dist/ControlCenter18_${VERSION}_arm64.deb" || true
           sha256sum dist/*.deb

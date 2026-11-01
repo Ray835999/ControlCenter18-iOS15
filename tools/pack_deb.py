@@ -70,15 +70,27 @@ def main():
             lines.append(line)
         control_text = "\n".join(lines) + "\n"
 
-    def build_control(tar):
-        data = control_text.encode("utf-8")
-        info = tarfile.TarInfo("./control")
+    def add_control_file(tar, name, data, mode=0o644):
+        info = tarfile.TarInfo("./" + name)
         info.size = len(data)
-        info.mode = 0o644
+        info.mode = mode
         info.uid = info.gid = 0
         info.uname = info.gname = "root"
         info.mtime = 1700000000
         tar.addfile(info, io.BytesIO(data))
+
+    def build_control(tar):
+        add_control_file(tar, "control", control_text.encode("utf-8"))
+        # Keep maintainer scripts (postinst/prerm/...) that came with the base
+        # package.  The postinst force-enables the tweak and resprings.
+        ctrl_dir = os.path.dirname(os.path.abspath(control_path))
+        for name in sorted(os.listdir(ctrl_dir)):
+            if name == "control" or not os.path.isfile(os.path.join(ctrl_dir, name)):
+                continue
+            with open(os.path.join(ctrl_dir, name), "rb") as f:
+                payload = f.read()
+            mode = 0o755 if name in ("postinst", "preinst", "prerm", "postrm") else 0o644
+            add_control_file(tar, name, payload, mode)
 
     def build_data(tar):
         add_tree(tar, data_root)

@@ -74,10 +74,17 @@ static void compat_log(const char *msg)
  * hook engine into the process.  If RTLD_DEFAULT only returns this shim's own
  * symbol, report "not available" so the caller uses its fallback.
  */
+static int same_pointer(void *a, void *b)
+{
+    /* arm64e function pointers may carry PAC bits; compare the canonical
+     * low 36 bits so we never mistake our own symbol for ElleKit. */
+    return ((unsigned long)a & 0xFFFFFFFFFUL) == ((unsigned long)b & 0xFFFFFFFFFUL);
+}
+
 static void *other_hook_engine(const char *name, void *self)
 {
     void *p = dlsym(RTLD_DEFAULT, name);
-    if (p && p != self)
+    if (p && !same_pointer(p, self))
         return p;
 
     static const char *paths[] = {
@@ -94,7 +101,7 @@ static void *other_hook_engine(const char *name, void *self)
         if (!h)
             continue;
         p = dlsym(h, name);
-        if (p && p != self)
+        if (p && !same_pointer(p, self))
             return p;
     }
     return 0;
