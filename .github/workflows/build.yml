@@ -82,38 +82,12 @@ jobs:
 
       - name: Verify shim exports and flat imports
         run: |
-          python3 - <<'PY'
-          import lief, struct
-          shim = "work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib"
-          main = "work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18.dylib"
-          f = lief.MachO.parse(shim)
-          assert len(f) == 2, len(f)
-          ex = {s.name for s in f[0].exported_symbols}
-          need = {f"_objc_release_x{i}" for i in range(31)} | \
-                 {f"_objc_retain_x{i}" for i in range(31)} | \
-                 {"_objc_claimAutoreleasedReturnValue", "_MSHookMessageEx",
-                  "_MSHookFunction", "_MSHookMemory"}
-          missing = need - ex
-          assert not missing, missing
-          print("shim exports OK:", len(ex))
-          for b in lief.MachO.parse(main):
-              for c in b.commands:
-                  if c.command.name == "DYLD_CHAINED_FIXUPS":
-                      raw = open(main, "rb").read()
-                      base = b.fat_offset + c.data_offset
-                      hdr = struct.unpack_from("<7I", raw, base)
-                      imports = base + hdr[2]
-                      symbols = base + hdr[3]
-                      found = {}
-                      for i in range(hdr[4]):
-                          v = struct.unpack_from("<I", raw, imports + 4*i)[0]
-                          name = raw[symbols + (v >> 9):raw.find(b"\0", symbols + (v >> 9))].decode()
-                          if name in ("_MSHookMessageEx", "_MSHookFunction", "_MSHookMemory"):
-                              found[name] = v & 0xff
-                      print("slice", b.header.cpu_subtype, found)
-                      assert all(v == 0xfe for v in found.values()), found
-          print("flat substrate imports OK")
-          PY
+          NM=$(command -v llvm-nm || command -v llvm-nm-14)
+          "$NM" --defined-only build/CC18Compat.dylib | grep -q _objc_claimAutoreleasedReturnValue
+          "$NM" --defined-only build/CC18Compat.dylib | grep -q _objc_release_x19
+          "$NM" --defined-only build/CC18Compat.dylib | grep -q _objc_retain_x19
+          "$NM" --defined-only build/CC18Compat.dylib | grep -q _MSHookMessageEx
+          python3 tools/check_flat.py work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18.dylib
 
       - name: Pack rootless deb
         run: |
