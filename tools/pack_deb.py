@@ -3,44 +3,66 @@
 
 Usage: pack_deb.py <data_root> <control_file> <out.deb> [<version>]
 
-data_root is the directory that contains var/jb/... (i.e. the extracted
-data.tar root).  The resulting archive always uses gzip compression and root
-ownership so Sileo/Zebra/dpkg accept it.
+The data tarball must contain explicit directory entries.  dpkg unpacks each
+file by creating "<path>.dpkg-new" in the parent directory; if the parent
+directory was never listed in the archive, dpkg fails with:
+
+    unable to create '.../file.dpkg-new': No such file or directory
+
+That is exactly what happened with the first build of this port.  This packer
+therefore emits every directory before its contents and preserves symlinks.
 """
 import io
 import os
 import sys
 import tarfile
-import time
-
 import gzip
 
 
-def add_tree(tar, root, extra_control=None):
-    entries = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        filenames.sort()
-        for name in filenames:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, root)
-            entries.append((full, rel))
-    for full, rel in entries:
-        info = tar.gettarinfo(full, arcname="./" + rel.replace(os.sep, "/"))
-        info.uid = 0
-        info.gid = 0
-        info.uname = "root"
-        info.gname = "root"
-        info.mtime = 1700000000
-        mode = os.stat(full).st_mode
-        info.mode = 0o755 if (mode & 0o111) else 0o644
-        with open(full, "rb") as f:
-            tar.addfile(info, f)
+def norm_mode(path, is_dir=False):
+    if is_dir:
+        return 0o755
+    return 0o755 if (os.stat(path).st_mode & 0o111) else 0o644
+
+
+def add_one(tar, full, arcname):
+    info = tar.gettarinfo(full, arcname=arcname)
+    info.uid = 0
+    info.gid = 0
+    info.uname = "root"
+    info.gname = "root"
+    info.mtime = 1700000000
+    if info.isdir():
+        info.mode = 0o755
+        tar.addfile(info)
+        return
+    if info.issym() or info.islnk():
+        tar.addfile(info)
+        return
+    info.mode = norm_mode(full)
+    with open(full, "rb") as f:
+        tar.addfile(info, f)
+
+
+def add_tree(tar, root):
+    def walk(rel):
+        full = root if rel == "." else os.path.join(root, rel)
+        arc = "./" if rel == "." else "./" + rel.replace(os.sep, "/")
+        add_one(tar, full, arc)
+        if os.path.islink(full) and rel != ".":
+            return
+        if not os.path.isdir(full):
+            return
+        for name in sorted(os.listdir(full)):
+            child = name if rel == "." else os.path.join(rel, name)
+            walk(child)
+
+    walk(".")
 
 
 def gz_tar(build):
     raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w") as tar:
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.GNU_FORMAT) as tar:
         build(tar)
     out = io.BytesIO()
     with gzip.GzipFile(fileobj=out, mode="wb", mtime=0) as gz:
@@ -81,8 +103,6 @@ def main():
 
     def build_control(tar):
         add_control_file(tar, "control", control_text.encode("utf-8"))
-        # Keep maintainer scripts (postinst/prerm/...) that came with the base
-        # package.  The postinst force-enables the tweak and resprings.
         ctrl_dir = os.path.dirname(os.path.abspath(control_path))
         for name in sorted(os.listdir(ctrl_dir)):
             if name == "control" or not os.path.isfile(os.path.join(ctrl_dir, name)):
@@ -92,11 +112,8 @@ def main():
             mode = 0o755 if name in ("postinst", "preinst", "prerm", "postrm") else 0o644
             add_control_file(tar, name, payload, mode)
 
-    def build_data(tar):
-        add_tree(tar, data_root)
-
     control_tar = gz_tar(build_control)
-    data_tar = gz_tar(build_data)
+    data_tar = gz_tar(lambda tar: add_tree(tar, data_root))
 
     with open(out_path, "wb") as f:
         f.write(b"!<arch>\n")
