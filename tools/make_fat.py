@@ -32,7 +32,7 @@ def main():
     table = b""
     body = b""
     for cputype, cpusubtype, data in slices:
-        table += struct.pack(">iiIII", cputype, cpusubtype, offset, len(data), 14)
+        table += struct.pack(">IIIII", cputype, cpusubtype, offset, len(data), 14)
         body += data
         pad = (-len(data)) % ALIGN
         body += b"\x00" * pad
