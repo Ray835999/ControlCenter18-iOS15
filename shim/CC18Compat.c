@@ -64,6 +64,11 @@ static void compat_log(const char *msg)
     close(fd);
 }
 
+__attribute__((constructor)) static void cc18compat_loaded(void)
+{
+    compat_log("CC18Compat loaded");
+}
+
 /*
  * Only ElleKit, and only if it is already mapped.  Loading a second copy of
  * the hook engine into SpringBoard would be worse than not having one.
