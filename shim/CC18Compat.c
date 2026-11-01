@@ -15,11 +15,11 @@
  *   - MSHookMessageEx / MSHookFunction / MSHookMemory / MSHookClassPair
  *
  * The hook API is forwarded to ElleKit's exported MobileSubstrate API when it
- * is available.  If it is not, MSHookMessageEx falls back to a conservative
- * Objective-C runtime method swizzle and MSHookMemory falls back to mprotect.
- * MSHookFunction cannot be implemented safely without an inline-hook engine,
- * so it is a no-op in that case (ElleKit is present on every supported
- * Dopamine installation, so this only matters on unusual setups).
+ * is already loaded.  If it is not, MSHookMessageEx falls back to a
+ * conservative Objective-C runtime method swizzle and MSHookMemory falls back
+ * to mprotect.  MSHookFunction cannot be implemented safely without an
+ * inline-hook engine, so it is a no-op in that case (ElleKit is present on
+ * every supported Dopamine installation).
  *
  * Build: clang -target arm64-apple-ios15.0 -dynamiclib -nostdlib ...
  * No SDK, no libSystem, no libobjc: everything is resolved at runtime.
@@ -33,16 +33,13 @@ typedef signed char BOOL;
 
 extern void *dlopen(const char *path, int mode);
 extern void *dlsym(void *handle, const char *symbol);
-extern int dlclose(void *handle);
 extern int getpagesize(void);
 extern int mprotect(void *addr, unsigned long len, int prot);
 extern void *memcpy(void *dst, const void *src, unsigned long n);
 extern unsigned long strlen(const char *s);
 
 extern Method class_getInstanceMethod(Class cls, SEL sel);
-extern IMP method_getImplementation(Method m);
 extern IMP method_setImplementation(Method m, IMP imp);
-extern const char *method_getTypeEncoding(Method m);
 extern BOOL class_addMethod(Class cls, SEL name, IMP imp, const char *types);
 
 extern int open(const char *path, int flags, ...);
@@ -52,6 +49,7 @@ extern int close(int fd);
 #define RTLD_NOW 2
 #define RTLD_GLOBAL 8
 #define RTLD_NOLOAD 0x10
+#define RTLD_DEFAULT ((void *)-2)
 
 #define O_WRONLY 0x0001
 #define O_CREAT 0x0200
@@ -60,9 +58,6 @@ extern int close(int fd);
 #define PROT_READ 0x1
 #define PROT_WRITE 0x2
 #define PROT_EXEC 0x4
-
-static void *g_ellekit;
-static int g_ellekit_tried;
 
 static void compat_log(const char *msg)
 {
@@ -74,39 +69,35 @@ static void compat_log(const char *msg)
     close(fd);
 }
 
-static void *ellekit_handle(void)
+/*
+ * Look for an already-loaded implementation, never load a second copy of the
+ * hook engine into the process.  If RTLD_DEFAULT only returns this shim's own
+ * symbol, report "not available" so the caller uses its fallback.
+ */
+static void *other_hook_engine(const char *name, void *self)
 {
-    if (g_ellekit)
-        return g_ellekit;
-    if (g_ellekit_tried)
-        return 0;
-    g_ellekit_tried = 1;
+    void *p = dlsym(RTLD_DEFAULT, name);
+    if (p && p != self)
+        return p;
 
     static const char *paths[] = {
         "/var/jb/usr/lib/libellekit.dylib",
         "/usr/lib/libellekit.dylib",
         "/var/jb/usr/lib/libsubstrate.dylib",
         "/usr/lib/libsubstrate.dylib",
+        "/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate",
+        "/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate",
         0
     };
-
     for (int i = 0; paths[i]; i++) {
-        /* RTLD_NOLOAD first: do not pull a second copy into the process. */
-        g_ellekit = dlopen(paths[i], RTLD_NOW | RTLD_GLOBAL | RTLD_NOLOAD);
-        if (!g_ellekit)
-            g_ellekit = dlopen(paths[i], RTLD_NOW | RTLD_GLOBAL);
-        if (g_ellekit)
-            return g_ellekit;
+        void *h = dlopen(paths[i], RTLD_NOW | RTLD_GLOBAL | RTLD_NOLOAD);
+        if (!h)
+            continue;
+        p = dlsym(h, name);
+        if (p && p != self)
+            return p;
     }
-
-    compat_log("CC18Compat: no ElleKit/CydiaSubstrate found, using fallbacks");
     return 0;
-}
-
-static void *ellekit_symbol(const char *name)
-{
-    void *h = ellekit_handle();
-    return h ? dlsym(h, name) : 0;
 }
 
 /*
@@ -116,7 +107,7 @@ static void *ellekit_symbol(const char *name)
 void MSHookMessageEx(Class cls, SEL sel, IMP imp, IMP *result)
 {
     typedef void (*fn_t)(Class, SEL, IMP, IMP *);
-    fn_t fn = (fn_t)ellekit_symbol("MSHookMessageEx");
+    fn_t fn = (fn_t)other_hook_engine("MSHookMessageEx", (void *)MSHookMessageEx);
     if (fn) {
         fn(cls, sel, imp, result);
         return;
@@ -144,7 +135,7 @@ void MSHookMessageEx(Class cls, SEL sel, IMP imp, IMP *result)
 void MSHookFunction(void *symbol, void *replace, void **result)
 {
     typedef void (*fn_t)(void *, void *, void **);
-    fn_t fn = (fn_t)ellekit_symbol("MSHookFunction");
+    fn_t fn = (fn_t)other_hook_engine("MSHookFunction", (void *)MSHookFunction);
     if (fn) {
         fn(symbol, replace, result);
         return;
@@ -157,7 +148,7 @@ void MSHookFunction(void *symbol, void *replace, void **result)
 void MSHookMemory(void *target, const void *data, unsigned long size)
 {
     typedef void (*fn_t)(void *, const void *, unsigned long);
-    fn_t fn = (fn_t)ellekit_symbol("MSHookMemory");
+    fn_t fn = (fn_t)other_hook_engine("MSHookMemory", (void *)MSHookMemory);
     if (fn) {
         fn(target, data, size);
         return;
@@ -174,7 +165,7 @@ void MSHookMemory(void *target, const void *data, unsigned long size)
 void MSHookClassPair(Class target_class, Class hook_class, Class base_class)
 {
     typedef void (*fn_t)(Class, Class, Class);
-    fn_t fn = (fn_t)ellekit_symbol("MSHookClassPair");
+    fn_t fn = (fn_t)other_hook_engine("MSHookClassPair", (void *)MSHookClassPair);
     if (fn)
         fn(target_class, hook_class, base_class);
 }
