@@ -45,7 +45,9 @@ if [ -d "$T" ]; then
     if [ -n "$RT" ] && [ "$RT" != "$RM" ]; then
         ln -sf "$M/ControlCenter18.dylib" "$T/ControlCenter18.dylib"
         ln -sf "$M/ControlCenter18.plist" "$T/ControlCenter18.plist"
-        echo "linked main tweak into TweakInject" >> "$LOG"
+        ln -sf "$M/C18Force.dylib" "$T/C18Force.dylib"
+        ln -sf "$M/C18Force.plist" "$T/C18Force.plist"
+        echo "linked main tweak + force loader into TweakInject" >> "$LOG"
     else
         echo "TweakInject already resolves to DynamicLibraries" >> "$LOG"
     fi

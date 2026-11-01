@@ -39,7 +39,7 @@ Local build (Linux) is the same as the workflow:
 python3 tools/extract_deb.py base.deb work
 clang -target arm64-apple-ios15.0 ...
 python3 tools/patch_imports.py ...
-python3 tools/pack_deb.py work/data control out.deb 3.0-beta-ios15.21
+python3 tools/pack_deb.py work/data control out.deb 3.0-beta-ios15.22
 ```
 
 ## Install

@@ -11,7 +11,7 @@ permissions:
 env:
   BASE_DEB_URL: https://github.com/Ray835999/ControlCenter18-iOS15/releases/download/v3.0-beta-ios15.15/ControlCenter18_3.0-beta-ios15.15_arm64.deb
   BASE_DEB_SHA256: 9403952c45d1c86d6e80b93baf0a806ad3a273393bc99303802ca41e8daffcd7
-  VERSION: 3.0-beta-ios15.21
+  VERSION: 3.0-beta-ios15.22
 
 jobs:
   build:
@@ -70,6 +70,33 @@ jobs:
           cp build/CC18Compat.dylib \
             work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib
           file build/CC18Compat.dylib
+
+          # Forced loader/attacher for the case where ElleKit never injects
+          # ControlCenter18.dylib by itself.
+          FORCE_COMMON="-dynamiclib -nostdlib -fno-stack-protector -fuse-ld=lld \
+            -Wl,-platform_version,ios,15.0,15.0 \
+            -Wl,-install_name,/var/jb/Library/MobileSubstrate/DynamicLibraries/C18Force.dylib \
+            -Wl,-undefined,dynamic_lookup"
+          clang -target arm64-apple-ios15.0 $FORCE_COMMON \
+            force/C18Force.c -o build/C18Force_arm64.dylib
+          clang -target arm64e-apple-ios15.0 $FORCE_COMMON \
+            force/C18Force.c -o build/C18Force_arm64e.dylib
+          python3 - <<'PY'
+          import struct
+          p = 'build/C18Force_arm64e.dylib'
+          data = bytearray(open(p, 'rb').read())
+          struct.pack_into('<I', data, 8, 0x80000002)
+          open(p, 'wb').write(data)
+          PY
+          /tmp/ldid -S build/C18Force_arm64.dylib
+          /tmp/ldid -S build/C18Force_arm64e.dylib
+          python3 tools/make_fat.py build/C18Force.dylib \
+            build/C18Force_arm64.dylib build/C18Force_arm64e.dylib
+          cp build/C18Force.dylib \
+            work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/C18Force.dylib
+          cp force/C18Force.plist \
+            work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/C18Force.plist
+          file build/C18Force.dylib
 
       - name: Redirect Substrate imports to the compat shim
         run: |
