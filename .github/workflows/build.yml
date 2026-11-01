@@ -11,7 +11,7 @@ permissions:
 env:
   BASE_DEB_URL: https://github.com/Ray835999/ControlCenter18-iOS15/releases/download/v3.0-beta-ios15.15/ControlCenter18_3.0-beta-ios15.15_arm64.deb
   BASE_DEB_SHA256: 9403952c45d1c86d6e80b93baf0a806ad3a273393bc99303802ca41e8daffcd7
-  VERSION: 3.0-beta-ios15.18
+  VERSION: 3.0-beta-ios15.19
 
 jobs:
   build:
@@ -106,6 +106,8 @@ jobs:
         run: |
           mkdir -p dist
           cp control work/ctrl/control
+          cp postinst work/ctrl/postinst
+          chmod 755 work/ctrl/postinst
           python3 tools/pack_deb.py work/data work/ctrl/control \
             "dist/ControlCenter18_${VERSION}_arm64.deb" "$VERSION"
           dpkg-deb -I "dist/ControlCenter18_${VERSION}_arm64.deb" || true
