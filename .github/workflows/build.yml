@@ -1,0 +1,130 @@
+name: Build ControlCenter18 iOS 15
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_DEB_URL: https://github.com/Ray835999/ControlCenter18-iOS15/releases/download/v3.0-beta-ios15.15/ControlCenter18_3.0-beta-ios15.15_arm64.deb
+  BASE_DEB_SHA256: 9403952c45d1c86d6e80b93baf0a806ad3a273393bc99303802ca41e8daffcd7
+  VERSION: 3.0-beta-ios15.16
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm file python3-pip curl ca-certificates
+          python3 -m pip install --disable-pip-version-check lief==1.0.0
+          curl -L --fail --retry 3 -o /tmp/ldid \
+            https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
+          chmod +x /tmp/ldid
+          /tmp/ldid -h 2>&1 | head -5 || true
+          clang --version | head -1
+          ld64.lld --version || true
+
+      - name: Fetch and unpack base package
+        run: |
+          curl -L --fail --retry 3 -o base.deb "$BASE_DEB_URL"
+          echo "$BASE_DEB_SHA256  base.deb" | sha256sum -c -
+          python3 tools/extract_deb.py base.deb work
+          # The previous diagnostic overlay must not ship in the final tweak.
+          rm -f work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/C18Probe.dylib
+          rm -f work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/C18Probe.plist
+
+      - name: Build compatibility shim (Linux, no macOS)
+        run: |
+          mkdir -p build
+          COMMON="-dynamiclib -nostdlib -fno-stack-protector -fuse-ld=lld \
+            -Wl,-platform_version,ios,15.0,15.0 \
+            -Wl,-install_name,/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib \
+            -Wl,-undefined,dynamic_lookup"
+          clang -target arm64-apple-ios15.0 $COMMON \
+            shim/CC18Compat.c shim/CC18Compat.S -o build/CC18Compat_arm64.dylib
+          clang -target arm64e-apple-ios15.0 $COMMON \
+            shim/CC18Compat.c shim/CC18Compat.S -o build/CC18Compat_arm64e.dylib
+          python3 tools/make_fat.py build/CC18Compat.dylib \
+            build/CC18Compat_arm64.dylib build/CC18Compat_arm64e.dylib
+          cp build/CC18Compat.dylib \
+            work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib
+          file build/CC18Compat.dylib
+
+      - name: Redirect Substrate imports to the compat shim
+        run: |
+          MAIN=work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18.dylib
+          python3 tools/patch_imports.py "$MAIN" \
+            _MSHookMessageEx _MSHookFunction _MSHookMemory
+          # Any other image that picked up a Substrate reference gets the same
+          # treatment.  Preference bundles normally do not link it.
+          find work/data -type f | while read -r f; do
+            if file "$f" | grep -q 'Mach-O'; then
+              python3 tools/patch_imports.py "$f" \
+                _MSHookMessageEx _MSHookFunction _MSHookMemory || true
+            fi
+          done
+
+      - name: Sign patched images
+        run: |
+          /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18.dylib
+          /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib
+          /tmp/ldid -S work/data/var/jb/Library/PreferenceBundles/ControlCenter18Prefs.bundle/ControlCenter18Prefs
+          /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18Settings.dylib
+          /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18Modules.dylib
+          /tmp/ldid -S work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18Favorite.dylib
+
+      - name: Verify shim exports and flat imports
+        run: |
+          python3 - <<'PY'
+          import lief, struct
+          shim = "work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/CC18ObjCLegacy.dylib"
+          main = "work/data/var/jb/Library/MobileSubstrate/DynamicLibraries/ControlCenter18.dylib"
+          f = lief.MachO.parse(shim)
+          assert len(f) == 2, len(f)
+          ex = {s.name for s in f[0].exported_symbols}
+          need = {f"_objc_release_x{i}" for i in range(31)} | \
+                 {f"_objc_retain_x{i}" for i in range(31)} | \
+                 {"_objc_claimAutoreleasedReturnValue", "_MSHookMessageEx",
+                  "_MSHookFunction", "_MSHookMemory"}
+          missing = need - ex
+          assert not missing, missing
+          print("shim exports OK:", len(ex))
+          for b in lief.MachO.parse(main):
+              for c in b.commands:
+                  if c.command.name == "DYLD_CHAINED_FIXUPS":
+                      raw = open(main, "rb").read()
+                      base = b.fat_offset + c.data_offset
+                      hdr = struct.unpack_from("<7I", raw, base)
+                      imports = base + hdr[2]
+                      symbols = base + hdr[3]
+                      found = {}
+                      for i in range(hdr[4]):
+                          v = struct.unpack_from("<I", raw, imports + 4*i)[0]
+                          name = raw[symbols + (v >> 9):raw.find(b"\0", symbols + (v >> 9))].decode()
+                          if name in ("_MSHookMessageEx", "_MSHookFunction", "_MSHookMemory"):
+                              found[name] = v & 0xff
+                      print("slice", b.header.cpu_subtype, found)
+                      assert all(v == 0xfe for v in found.values()), found
+          print("flat substrate imports OK")
+          PY
+
+      - name: Pack rootless deb
+        run: |
+          mkdir -p dist
+          python3 tools/pack_deb.py work/data control \
+            "dist/ControlCenter18_${VERSION}_arm64.deb" "$VERSION"
+          dpkg-deb -I "dist/ControlCenter18_${VERSION}_arm64.deb" || true
+          sha256sum dist/*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ControlCenter18-${{ env.VERSION }}-arm64
+          path: dist/*.deb
+          if-no-files-found: error
