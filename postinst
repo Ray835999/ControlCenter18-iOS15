@@ -26,9 +26,10 @@ PLIST
     chmod 644 "$P"
 fi
 
-# ElleKit prefers /var/jb/usr/lib/TweakInject when that path is a real
-# directory.  Some bootstraps keep it separate from the MobileSubstrate
-# directory, which would silently leave the SpringBoard dylib uninjected.
+# ElleKit prefers /var/jb/usr/lib/TweakInject when that path exists.  It may
+# be the MobileSubstrate directory itself, a symlink to it, a symlink to some
+# other directory, or a separate directory.  Only the first two cases already
+# see our dylib.  Resolve the target and link into it otherwise.
 T=/var/jb/usr/lib/TweakInject
 M=/var/jb/Library/MobileSubstrate/DynamicLibraries
 LOG=/var/mobile/cc18inject.log
@@ -36,12 +37,20 @@ LOG=/var/mobile/cc18inject.log
     echo "CC18 iOS15 install"
     ls -ld "$T" "$M" 2>&1
 } > "$LOG" 2>&1
-if [ -d "$T" ] && [ ! -L "$T" ]; then
-    ln -sf "$M/ControlCenter18.dylib" "$T/ControlCenter18.dylib"
-    ln -sf "$M/ControlCenter18.plist" "$T/ControlCenter18.plist"
-    echo "linked main tweak into TweakInject" >> "$LOG"
+if [ -d "$T" ]; then
+    RT=$(cd "$T" 2>/dev/null && pwd -P)
+    RM=$(cd "$M" 2>/dev/null && pwd -P)
+    echo "T=$RT" >> "$LOG"
+    echo "M=$RM" >> "$LOG"
+    if [ -n "$RT" ] && [ "$RT" != "$RM" ]; then
+        ln -sf "$M/ControlCenter18.dylib" "$T/ControlCenter18.dylib"
+        ln -sf "$M/ControlCenter18.plist" "$T/ControlCenter18.plist"
+        echo "linked main tweak into TweakInject" >> "$LOG"
+    else
+        echo "TweakInject already resolves to DynamicLibraries" >> "$LOG"
+    fi
 else
-    echo "no separate TweakInject directory; main stays in DynamicLibraries" >> "$LOG"
+    echo "TweakInject directory absent; main stays in DynamicLibraries" >> "$LOG"
 fi
 
 killall -9 cfprefsd 2>/dev/null
